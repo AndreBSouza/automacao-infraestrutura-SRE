@@ -1,0 +1,41 @@
+# SAI — low-risk pre-approved allowlist (SPEC.md section 7.3).
+#
+# THIS FILE IS THE ONLY PLACE LOW-RISK AUTO-EXECUTION IS GRANTED. It is
+# versioned in the repo and NOT editable via chat/API by design — a
+# conversation (human or LLM) can never grant itself pre-approval; only a
+# human editing and deploying this file can.
+#
+# Rules (enforced in code, see sai/approval/engine.py and
+# sai/approval/allowlist.py):
+#   - Only tools with a fixed risk_level of 'low' are ever eligible here.
+#   - A match requires BOTH tool_name AND every key under `scope` to match
+#     (glob patterns allowed, e.g. "web-*.internal").
+#   - Every allowlisted execution is STILL fully audited and still sends an
+#     informational (non-blocking) notification.
+#   - Anything not listed here — and anything classified medium/high/critical
+#     — is always blocking, with no chat-based override.
+
+allowlist:
+  # --- EXAMPLE ENTRIES — DO NOT USE IN PRODUCTION WITHOUT REVIEW ---
+  # Replace these hostnames/services with your own reviewed, real values
+  # before relying on this file in any non-dev environment.
+
+  - tool_name: linux_restart_service
+    scope:
+      host: "web-01.internal.example.com"   # EXAMPLE — DO NOT USE IN PRODUCTION WITHOUT REVIEW
+      service: "nginx"
+
+  - tool_name: linux_restart_service
+    scope:
+      host: "web-02.internal.example.com"   # EXAMPLE — DO NOT USE IN PRODUCTION WITHOUT REVIEW
+      service: "gunicorn-app-worker"
+
+  - tool_name: zabbix_acknowledge_problem
+    scope: {}   # EXAMPLE — acknowledging is allowlisted unscoped; review before enabling in prod
+
+  - tool_name: nginx_reload
+    scope:
+      host: "web-*.internal.example.com"    # EXAMPLE — DO NOT USE IN PRODUCTION WITHOUT REVIEW
+    # Note: nginx_reload additionally always runs `nginx -t` first and
+    # aborts on failure — enforced in code (sai/connectors/nginx_connector.py),
+    # not just by this allowlist entry.

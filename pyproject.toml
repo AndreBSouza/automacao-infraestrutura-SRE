@@ -1,0 +1,16 @@
+[project]
+name = "sai"
+version = "1.0.0"
+description = "SAI — Sistema de Automação e Copiloto de Infraestrutura"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["sai/tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["sai*"]

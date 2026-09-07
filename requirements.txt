@@ -1,0 +1,55 @@
+# --- Web framework / server ---
+fastapi>=0.115
+uvicorn[standard]>=0.32
+
+# --- Settings / validation ---
+pydantic>=2.9
+pydantic-settings>=2.6
+
+# --- Database ---
+sqlalchemy[asyncio]>=2.0.35
+asyncpg>=0.30
+alembic>=1.13
+pgvector>=0.3.6
+
+# --- LLM ---
+anthropic>=0.40
+
+# --- Azure ---
+azure-identity>=1.19
+azure-mgmt-resourcegraph>=8.0
+# Pinned to 1.x: in 2.0 the metrics clients were split out into the separate
+# azure-monitor-querymetrics package, so MetricsQueryClient no longer exists
+# under azure.monitor.query.aio. 1.x carries both logs and metrics clients.
+azure-monitor-query>=1.4,<2
+azure-mgmt-compute>=33.0
+azure-mgmt-sql>=4.0
+azure-mgmt-web>=7.3
+azure-core>=1.32
+
+# --- SQL Server ---
+pyodbc>=5.2
+
+# --- SSH (Linux/Nginx) ---
+asyncssh>=2.18
+
+# --- HTTP client (DevOps, Grafana, Zabbix, F5) ---
+httpx>=0.27
+
+# --- Auth ---
+msal>=1.31
+pyjwt[crypto]>=2.9
+
+# Relatórios exportáveis (SPEC 14)
+openpyxl>=3.1
+reportlab>=4.2
+
+# --- Scheduler ---
+apscheduler>=3.10
+
+# --- Config files ---
+pyyaml>=6.0
+
+# --- Testing ---
+pytest>=8.3
+pytest-asyncio>=0.24

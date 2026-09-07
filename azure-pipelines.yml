@@ -1,0 +1,153 @@
+# CI/CD do SAI (SPEC.md seção 12).
+#
+# Estratégia: lint + testes rodam em TODA execução. O gate de segurança da
+# seção 13.3 (nenhuma tool high/critical executa sem aprovação) é bloqueante:
+# se ele falhar, nada é publicado nem implantado.
+#
+# Deploy: dev automático na main, staging automático, prod SOMENTE com
+# aprovação manual configurada no Environment "sai-prod" do Azure DevOps
+# (Pipelines > Environments > sai-prod > Approvals and checks).
+
+trigger:
+  branches:
+    include: [main]
+pr:
+  branches:
+    include: [main]
+
+variables:
+  pythonVersion: '3.12'
+  vmImage: 'ubuntu-latest'
+  # Nome da service connection do tipo Azure Resource Manager.
+  azureServiceConnection: 'sai-azure-connection'
+  acrName: '$(ACR_NAME)'
+  imageRepository: 'sai'
+
+stages:
+
+# ---------------------------------------------------------------------------
+- stage: Validate
+  displayName: 'Lint e testes'
+  jobs:
+    - job: test
+      displayName: 'Testes + gate de segurança'
+      pool:
+        vmImage: $(vmImage)
+      steps:
+        - task: UsePythonVersion@0
+          inputs:
+            versionSpec: '$(pythonVersion)'
+
+        - script: |
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            pip install ruff
+          displayName: 'Instalar dependências'
+
+        - script: ruff check sai/
+          displayName: 'Lint (ruff)'
+
+        - script: python -m compileall -q sai/
+          displayName: 'Checagem de sintaxe'
+
+        # Gate bloqueante — SPEC 13.3. Roda ISOLADO e ANTES do restante para
+        # que uma regressão na governança falhe o build imediatamente e de
+        # forma inequívoca no log.
+        - script: |
+            python -m pytest sai/tests/test_approval_engine.py \
+                             sai/tests/test_webhook_security.py \
+                             sai/tests/test_api_webhook_endpoints.py \
+                             sai/tests/test_prompt_injection.py \
+                             sai/tests/test_rollback.py \
+                             -q --tb=short
+          displayName: 'GATE: governança, segurança de webhooks e rollback'
+
+        - script: |
+            python -m pytest sai/tests -q \
+              --junitxml=junit/test-results.xml
+          displayName: 'Suíte completa de testes'
+
+        - task: PublishTestResults@2
+          condition: succeededOrFailed()
+          inputs:
+            testResultsFiles: 'junit/test-results.xml'
+            testRunTitle: 'SAI $(Build.BuildNumber)'
+
+    - job: frontend
+      displayName: 'Frontend — typecheck e build'
+      pool:
+        vmImage: $(vmImage)
+      steps:
+        - task: NodeTool@0
+          inputs:
+            versionSpec: '20.x'
+
+        - script: npm ci
+          workingDirectory: frontend
+          displayName: 'Instalar dependências'
+
+        - script: npm run typecheck
+          workingDirectory: frontend
+          displayName: 'Typecheck (tsc)'
+
+        - script: npm test
+          workingDirectory: frontend
+          displayName: 'Testes (vitest)'
+
+        - script: npm run build
+          workingDirectory: frontend
+          displayName: 'Build de produção'
+
+        - publish: frontend/dist
+          artifact: frontend-dist
+          displayName: 'Publicar bundle'
+
+# ---------------------------------------------------------------------------
+- stage: Build
+  displayName: 'Build da imagem'
+  dependsOn: Validate
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+    - job: build_image
+      pool:
+        vmImage: $(vmImage)
+      steps:
+        - task: AzureCLI@2
+          displayName: 'Build e push para o ACR'
+          inputs:
+            azureSubscription: $(azureServiceConnection)
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              set -euo pipefail
+              az acr build \
+                --registry "$(acrName)" \
+                --image "$(imageRepository):$(Build.BuildId)" \
+                --image "$(imageRepository):latest" \
+                --file Dockerfile .
+
+# ---------------------------------------------------------------------------
+- template: .azuredevops/deploy-stage.yml
+  parameters:
+    stageName: DeployDev
+    displayName: 'Deploy — dev'
+    environmentName: dev
+    azureEnvironment: 'sai-dev'
+    dependsOn: Build
+
+- template: .azuredevops/deploy-stage.yml
+  parameters:
+    stageName: DeployStaging
+    displayName: 'Deploy — staging'
+    environmentName: staging
+    azureEnvironment: 'sai-staging'
+    dependsOn: DeployDev
+
+# Produção exige aprovação manual, configurada no Environment "sai-prod".
+- template: .azuredevops/deploy-stage.yml
+  parameters:
+    stageName: DeployProd
+    displayName: 'Deploy — produção (requer aprovação)'
+    environmentName: prod
+    azureEnvironment: 'sai-prod'
+    dependsOn: DeployStaging

@@ -1,0 +1,91 @@
+# Template reutilizável de stage de deploy, usado por azure-pipelines.yml
+# para dev, staging e prod.
+#
+# A aprovação manual de produção NÃO é declarada aqui: ela é configurada no
+# Environment do Azure DevOps (Pipelines > Environments > sai-prod >
+# Approvals and checks). Isso é proposital — assim a exigência de aprovação
+# não pode ser removida editando este arquivo em um PR.
+
+parameters:
+  - name: stageName
+    type: string
+  - name: displayName
+    type: string
+  - name: environmentName
+    type: string
+  - name: azureEnvironment
+    type: string
+  - name: dependsOn
+    type: string
+
+stages:
+  - stage: ${{ parameters.stageName }}
+    displayName: ${{ parameters.displayName }}
+    dependsOn: ${{ parameters.dependsOn }}
+    condition: succeeded()
+    jobs:
+      - deployment: deploy
+        environment: ${{ parameters.azureEnvironment }}
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: AzureCLI@2
+                  displayName: 'Provisionar infraestrutura (Bicep)'
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      az deployment group create \
+                        --resource-group "$(RESOURCE_GROUP)" \
+                        --template-file infra/main.bicep \
+                        --parameters \
+                          environmentName='${{ parameters.environmentName }}' \
+                          adminGroupObjectId='$(ADMIN_GROUP_OBJECT_ID)' \
+                          postgresAdminPassword='$(POSTGRES_ADMIN_PASSWORD)' \
+                          imageTag='$(Build.BuildId)'
+
+                - task: AzureCLI@2
+                  displayName: 'Aplicar migrations do banco'
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      python -m pip install --upgrade pip
+                      pip install -r requirements.txt
+                      # pgvector precisa existir antes da primeira migration.
+                      alembic upgrade head
+                  env:
+                    DATABASE_URL: $(DATABASE_URL)
+
+                - task: AzureCLI@2
+                  displayName: 'Health check pós-deploy'
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      FQDN=$(az containerapp show \
+                        --name "ca-sai-${{ parameters.environmentName }}-api" \
+                        --resource-group "$(RESOURCE_GROUP)" \
+                        --query properties.configuration.ingress.fqdn -o tsv)
+                      echo "Verificando https://$FQDN/health/ready"
+                      for i in $(seq 1 10); do
+                        if curl -fsS "https://$FQDN/health/ready" > /dev/null; then
+                          echo "Health check OK"
+                          exit 0
+                        fi
+                        echo "tentativa $i falhou; aguardando..."
+                        sleep 15
+                      done
+                      echo "Health check falhou após o deploy" >&2
+                      exit 1

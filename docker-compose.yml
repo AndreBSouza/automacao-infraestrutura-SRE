@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sai
+      POSTGRES_PASSWORD: sai
+      POSTGRES_DB: sai
+    ports:
+      - "5432:5432"
+    volumes:
+      - sai_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Optional: only needed if you extend the system with Celery/queues or
+  # want distributed rate-limit state. Not required by the current
+  # APScheduler-based scheduler (see README "Deviations from SPEC").
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sai:sai@postgres:5432/sai
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./docs:/app/docs
+      - ./allowlist.yaml:/app/allowlist.yaml:ro
+
+volumes:
+  sai_postgres_data:
